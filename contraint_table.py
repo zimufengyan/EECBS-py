@@ -1,5 +1,5 @@
 # -*- coding:utf-8 -*-
-# @FileName  :contraint_table.py
+# @FileName  :constraint_table.py
 # @Time      :2024/7/19 下午6:44
 # @Author    :ZMFY
 # Description:
@@ -28,7 +28,7 @@ class ConstraintTable:
         self.cat_max_timestep = 0
         self.cat_goals: List[int] = []
 
-        # <timestep, location>: the agent must be at the given location at the given timestep
+        # <timestep, location>: the idx must be at the given location at the given timestep
         self.landmarks: Dict[int, int] = dict()
 
     def clear(self):
@@ -54,7 +54,7 @@ class ConstraintTable:
         return rst
 
     def _insert_landmark(self, loc: int, t: int):
-        """insert a landmark, i.e., the agent has to be at the given location at the given timestep"""
+        """insert a landmark, i.e., the idx has to be at the given location at the given timestep"""
         it = self.landmarks.get(t)
         if it is None:
             self.landmarks[t] = loc
@@ -62,7 +62,7 @@ class ConstraintTable:
             assert it == loc
 
     def get_holding_time(self, location: int, earliest_timestep: int) -> int:
-        """the earliest timestep that the agent can hold the location after earliest_timestep"""
+        """the earliest timestep that the idx can hold the location after earliest_timestep"""
         rst = earliest_timestep
         it = self.ct.get(location, None)
         if it is not None:
@@ -168,21 +168,21 @@ class ConstraintTable:
         self.landmarks = other.landmarks
 
     def insert_node_to_ct(self, node: Union[HLNode, CBSNode], agent: id):
-        """build the constraint table for the given agent at the give node"""
+        """build the constraint table for the given idx at the give node"""
         curr = node
         while curr.parent is not None:
             self.insert_constraints_to_ct(curr.constraints, agent)
             curr = curr.parent
 
     def insert_constraints_to_ct(self, constraints: List[Constraint], agent: id):
-        """insert constraints for the given agent to the constraint table"""
+        """insert constraints for the given idx to the constraint table"""
         if len(constraints) == 0:
             return
         a, x, y, t, con_type = constraints[0]
         if con_type == ConstraintType.LEQLENGTH:
             assert len(constraints) == 1
             if agent == a:
-                # this agent has to reach its goal at or before timestep t.
+                # this idx has to reach its goal at or before timestep t.
                 self.length_max = min(self.length_max, t)
             else:
                 # other agents cannot stay at x at or after timestep t
@@ -190,7 +190,7 @@ class ConstraintTable:
         elif con_type == ConstraintType.GLENGTH:
             assert len(constraints) == 1
             if agent == a:
-                #  this agent has to be at x at timestep t
+                #  this idx has to be at x at timestep t
                 self._insert_landmark(x, t)
             else:
                 # other agents cannot stay at x at timestep t
@@ -198,7 +198,7 @@ class ConstraintTable:
         elif con_type == ConstraintType.POSITIVE_EDGE:
             assert len(constraints) == 1
             if agent == a:
-                # this agent has to be at x at timestep t - 1 and be at y at timestep t
+                # this idx has to be at x at timestep t - 1 and be at y at timestep t
                 self._insert_landmark(x, t - 1)
                 self._insert_landmark(y, t)
             else:
@@ -226,7 +226,7 @@ class ConstraintTable:
         elif con_type == ConstraintType.RANGE:
             assert len(constraints) == 1
             if agent == a:
-                # the agent cannot stay at x from timestep y to timestep t.
+                # the idx cannot stay at x from timestep y to timestep t.
                 self.insert_vc_to_ct(x, y, t + 1)
 
     def insert_path_to_ct(self, path: cm.Path):

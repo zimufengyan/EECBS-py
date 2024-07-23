@@ -57,7 +57,7 @@ class SpaceTimeSolver(SingleAgentSolver):
         constraint_table.insert_paths_to_cat(agent, paths)
         self.runtime_build_cat = time.perf_counter() - st
 
-        # the earliest timestep that the agent can hold its goal location. The length_min is considered here.
+        # the earliest timestep that the idx can hold its goal location. The length_min is considered here.
         holding_time = constraint_table.get_holding_time(self.goal_location, constraint_table.length_min)
         static_timestep = constraint_table.get_max_timestep() + 1
         lower_bound = max(lower_bound, holding_time)
@@ -83,7 +83,7 @@ class SpaceTimeSolver(SingleAgentSolver):
             # check if the popped node is a goal
             if (curr.location == self.goal_location  # arrive at the goal location
                     and not curr.wait_at_goal  # not wait at the goal location
-                    and curr.timestep >= holding_time):  # the agent can hold the goal location afterward
+                    and curr.timestep >= holding_time):  # the idx can hold the goal location afterward
                 path = self._update_path(curr, path)
                 break
             if curr.timestep >= constraint_table.length_max:

@@ -48,6 +48,14 @@ class Instance(object):
         self.start_locations: np.ndarray = np.zeros(self.num_of_agents, dtype=int)
         self.goal_locations: np.ndarray = np.zeros(self.num_of_agents, dtype=int)
 
+    @property
+    def cols(self):
+        return self.num_of_cols
+
+    @property
+    def rows(self):
+        return self.num_of_rows
+
     def is_obstacle(self, loc: int) -> bool:
         return bool(self.my_map[loc])
 
