@@ -4,7 +4,7 @@
 # @Author    :ZMFY
 # Description:
 
-from typing import List, Dict, Set, Tuple, Union
+from typing import List, Dict, Set, Tuple, Optional
 import numpy as np
 import random
 from dataclasses import dataclass
@@ -15,52 +15,55 @@ import common as cm
 
 
 class ConflictType(Enum):
-    MUTEX = 1
-    TARGET = 2
-    CORRIDOR = 3
-    RECTANGLE = 4
-    STANDARD = 5
-    TYPE_COUNT = 6
+    MUTEX = 0
+    TARGET = 1
+    CORRIDOR = 2
+    RECTANGLE = 3
+    STANDARD = 4
+    TYPE_COUNT = 5
 
 
 class ConstraintType(Enum):
-    LEQLENGTH = 1
-    GLENGTH = 2
-    RANGE = 3
-    BARRIER = 4
-    VERTEX = 5
-    EDGE = 6
-    POSITIVE_VERTEX = 7
-    POSITIVE_EDGE = 8
-    CONSTRAINT_COUNT = 9
+    LEQLENGTH = 0
+    GLENGTH = 1
+    RANGE = 2
+    BARRIER = 3
+    VERTEX = 4
+    EDGE = 5
+    POSITIVE_VERTEX = 6
+    POSITIVE_EDGE = 7
+    CONSTRAINT_COUNT = 8
 
 
 class ConflictPriority(Enum):
-    CARDINAL = 1
-    PSEUDO_CARDINAL = 2
-    SEMI = 3
-    NON = 4
-    UNKNOWN = 5
-    PRIORITY_COUNT = 6
+    CARDINAL = 0
+    PSEUDO_CARDINAL = 1
+    SEMI = 2
+    NON = 3
+    UNKNOWN = 4
+    PRIORITY_COUNT = 5
 
 
 class ConflictSelection(Enum):
-    RANDOM = 1
-    EARLIEST = 2
-    CONFLICTS = 3
-    MCONSTRAINTS = 4
-    FCONSTRAINTS = 5
-    WIDTH = 6
-    SINGLETONS = 7
+    RANDOM = 0
+    EARLIEST = 1
+    CONFLICTS = 2
+    MCONSTRAINTS = 3
+    FCONSTRAINTS = 4
+    WIDTH = 5
+    SINGLETONS = 6
 
 
-@dataclass
 class Constraint:
-    agent: int
-    loc1: int
-    loc2: int
-    t: int
-    flag: ConstraintType
+    def __init__(self, agent, loc1, loc2, t, flag):
+        self.agent: int = agent
+        self.loc1: int = loc1
+        self.loc2: int = loc2
+        self.t: int = t
+        self.flag: ConstraintType = flag
+
+    def __iter__(self):
+        return iter((self.agent, self.loc1, self.loc2, self.t, self.flag))
 
     def __repr__(self):
         type_str = ""
@@ -97,22 +100,25 @@ class Conflict:
         # used as the tie-breaking creteria for conflict selection
         self.secondary_priority: float = 0
 
+    def __iter__(self):
+        return iter((self.a1, self.a2, self.constraint1, self.constraint2, self.con_type,
+                     self.priority, self.secondary_priority))
+
     def __lt__(self, other):
         """return true if self has lower priority"""
         if self.priority == other.priority:
             if self.con_type == other.con_type:
                 if self.secondary_priority == other.secondary_priority:
-                    return random.randint(1, 100000) % 2
-                return self.secondary_priority < other.secondary_priority
-            return self.con_type.value < other.con_type.value
-        return self.priority < other.priority
+                    return random.random() < 0.5
+                return self.secondary_priority <= other.secondary_priority
+            return self.con_type.value <= other.con_type.value
+        return self.priority.value <= other.priority.value
 
     def get_conflict_id(self):
         return self.con_type.value
 
     def vertex_conflict(self, a1: int, a2: int, v: int, t: int):
-        self.constraint1.clear()
-        self.constraint2.clear()
+        self._clear_constrains()
         self.a1 = a1
         self.a2 = a2
         self.constraint1.append(Constraint(a1, v, -1, t, ConstraintType.VERTEX))
@@ -120,8 +126,7 @@ class Conflict:
         self.con_type = ConflictType.STANDARD
 
     def edge_conflict(self, a1: int, a2: int, v1: int, v2: int, t: int):
-        self.constraint1.clear()
-        self.constraint2.clear()
+        self._clear_constrains()
         self.a1 = a1
         self.a2 = a2
         self.constraint1.append(Constraint(a1, v1, v2, t, ConstraintType.EDGE))
@@ -129,8 +134,7 @@ class Conflict:
         self.con_type = ConflictType.STANDARD
 
     def corridor_conflict(self, a1: int, a2: int, v1: int, v2: int, t1: int, t2: int):
-        self.constraint1.clear()
-        self.constraint2.clear()
+        self._clear_constrains()
         self.a1 = a1
         self.a2 = a2
         self.constraint1.append(Constraint(a1, v1, 0, t1, ConstraintType.RANGE))
@@ -141,14 +145,13 @@ class Conflict:
                            constraint2: List[Constraint]) -> bool:
         self.a1 = a1
         self.a2 = a2
-        self.constraint1 = deepcopy(constraint1)
-        self.constraint2 = deepcopy(constraint2)
+        self.constraint1 = constraint1
+        self.constraint2 = constraint2
         self.con_type = ConflictType.RECTANGLE
         return True
 
     def target_conflict(self, a1: int, a2: int, v: int, t: int):
-        self.constraint1.clear()
-        self.constraint2.clear()
+        self._clear_constrains()
         self.a1 = a1
         self.a2 = a2
         self.constraint1.append(Constraint(a1, v, -1, t, ConstraintType.LEQLENGTH))
@@ -156,12 +159,15 @@ class Conflict:
         self.con_type = ConflictType.TARGET
 
     def mutex_conflict(self, a1: int, a2: int):
-        self.constraint1.clear()
-        self.constraint2.clear()
+        self._clear_constrains()
         self.a1 = a1
         self.a2 = a2
         self.con_type = ConflictType.MUTEX
         self.priority = ConflictPriority.CARDINAL
+
+    def _clear_constrains(self):
+        self.constraint1.clear()
+        self.constraint2.clear()
 
     def __repr__(self):
         priority_str = ""
@@ -194,5 +200,5 @@ class Conflict:
 
 
 if __name__ == "__main__":
-    con = Constraint(1, 1, 1, 1, ConstraintType.RANGE)
-    print(con)
+    agent, x, y, t, flag = Constraint(1, 1, 1, 1, ConstraintType.RANGE)
+    print(agent, x, y, t, flag)

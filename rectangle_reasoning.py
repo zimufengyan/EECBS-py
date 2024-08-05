@@ -604,7 +604,7 @@ class RectangleReasoning:
         t_max = min(rg_t, len(mdd.levels) - 1)
 
         for t2 in range(t_min, t_max + 1):
-            loc = self.instance.linearize_coordinate((x, ri_y + (t2 - ri_t) * sign))
+            loc = self.instance.linearize_coordinate(x, ri_y + (t2 - ri_t) * sign)
             it = None
             for n in mdd.levels[t2]:
                 if n.location == loc:
@@ -613,8 +613,8 @@ class RectangleReasoning:
 
             if it is None and t1 >= 0:
                 # add constraints [t1, t2)
-                loc1 = self.instance.linearize_coordinate((x, ri_y + (t1 - ri_t) * sign))
-                loc2 = self.instance.linearize_coordinate((x, ri_y + (t2 - ri_t - 1) * sign))
+                loc1 = self.instance.linearize_coordinate(x, ri_y + (t1 - ri_t) * sign)
+                loc2 = self.instance.linearize_coordinate(x, ri_y + (t2 - ri_t - 1) * sign)
                 constrains.append(Constraint(agent, loc1, loc2, t2 - 1, ConstraintType.BARRIER))
                 t1 = -1
                 continue
@@ -622,7 +622,7 @@ class RectangleReasoning:
                 t1 = t2
             if it is not None and t2 == t_max:
                 # add constraints [t1, t2]
-                loc1 = self.instance.linearize_coordinate((x, ri_y + (t1 - ri_t) * sign))
+                loc1 = self.instance.linearize_coordinate(x, ri_y + (t1 - ri_t) * sign)
                 constrains.append(Constraint(agent, loc1, loc, t2, ConstraintType.BARRIER))
 
         if len(constrains) == 0:
@@ -694,7 +694,7 @@ class RectangleReasoning:
         if t >= len(path):
             return loc == path[-1].location
         else:
-            return t >= 0 and path[t].loation == loc
+            return t >= 0 and path[t].location == loc
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from collections import deque
 from typing import List, Dict, Tuple, Union
 from multipledispatch import dispatch
 import random
+import matplotlib.pyplot as plt
 
 import common as cm
 
@@ -25,6 +26,11 @@ class Instance(object):
         self.num_of_cols = num_of_cols
         self.num_of_obstacles = num_of_obstacles
         self.warehouse_width = warehouse_width
+
+        self.map_size: int = self.num_of_rows * self.num_of_cols
+        self.my_map = np.zeros(self.map_size, dtype=bool)
+        self.start_locations: np.ndarray = np.zeros(self.num_of_agents, dtype=int)
+        self.goal_locations: np.ndarray = np.zeros(self.num_of_agents, dtype=int)
 
         succ = self.load_map()
         if not succ:
@@ -43,10 +49,33 @@ class Instance(object):
             else:
                 raise RuntimeError(f"Agent file {self.agent_fname} not found.")
 
-        self.map_size: int = self.num_of_rows * self.num_of_cols
-        self.my_map = np.zeros(self.map_size, dtype=bool)
-        self.start_locations: np.ndarray = np.zeros(self.num_of_agents, dtype=int)
-        self.goal_locations: np.ndarray = np.zeros(self.num_of_agents, dtype=int)
+    def draw_map(self, fname):
+        # 将字符串转化为二维数组
+        grid = self.my_map.reshape(self.rows, self.cols).astype(int)
+
+        # 定义颜色映射：'.' -> 绿色, '@' -> 灰色
+        color_map = {0: 'red', 1: 'green'}
+        colors = np.vectorize(color_map.get)(grid)
+
+        # 创建绘图
+        fig, ax = plt.subplots(figsize=(self.rows, self.cols), dpi=10)
+
+        # 绘制颜色方格图
+        for i in range(self.rows):
+            for j in range(self.cols):
+                ax.add_patch(plt.Rectangle((j, self.rows - i - 1), 1, 1, color=colors[i, j]))
+
+        # # 设置坐标范围和比例
+        # ax.set_xlim(0, )
+        # ax.set_ylim(0, 32)
+        # ax.set_aspect('equal')
+
+        # 去除坐标轴
+        ax.axis('off')
+
+        # 显示图像
+        fig.savefig(fname)
+        plt.close()
 
     @property
     def cols(self):
@@ -60,18 +89,15 @@ class Instance(object):
         return bool(self.my_map[loc])
 
     def valid_move(self, curr: int, nxt: int):
-        if nxt < 0 or nxt > self.map_size:
+        if nxt < 0 or nxt >= self.map_size:
             return False
         if self.my_map[nxt]:
             return False
         return self.get_manhattan_distance(curr, nxt) < 2
 
     def get_neighbors(self, curr: int) -> List[int]:
-        neighbors: List[int] = []
         candidates = [curr + 1, curr - 1, curr + self.num_of_cols, curr - self.num_of_cols]
-        for nxt in candidates:
-            if self.valid_move(curr, nxt):
-                neighbors.append(nxt)
+        neighbors:  List[int] = [nxt for nxt in candidates if self.valid_move(curr, nxt)]
         return neighbors
 
     def linearize_coordinate(self, row, col) -> int:
@@ -117,7 +143,6 @@ class Instance(object):
                 line = myfile.readline().strip()
 
                 if line[0] == 't':  # Nathan's benchmark
-                    myfile.readline()  # Skip line
                     line = myfile.readline().strip()
                     num_of_rows = int(line.split()[1])  # read number of rows
 
@@ -209,9 +234,9 @@ class Instance(object):
         for i in range(self.num_of_agents):
             print(f"Agent {i} : "
                   f"S=({self.get_row_coordinate(int(self.start_locations[i]))},"
-                  f"{self.get_col_coordinate(int(self.start_locations[i]))}); "
+                  f"{self.get_col_coordinate(int(self.start_locations[i]))}) or {self.start_locations[i]}; "
                   f"G=({self.get_row_coordinate(int(self.goal_locations[i]))},"
-                  f"{self.get_col_coordinate(int(self.goal_locations[i]))})")
+                  f"{self.get_col_coordinate(int(self.goal_locations[i]))}) or {self.goal_locations[i]}")
 
     def save_agents(self):
         with open(self.agent_fname, 'w') as myfile:
@@ -372,4 +397,6 @@ class Instance(object):
 
 
 if __name__ == "__main__":
-    pass
+    instace = Instance('./instances/random-32-32-20.map',
+                       './instances/random-32-32-20-random-1.scen', num_of_agents=10)
+    instace.draw_map('./output/random-32-32-20.png')

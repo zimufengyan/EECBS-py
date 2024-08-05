@@ -11,15 +11,15 @@ import heapq as hpq
 from instance import Instance
 from nodes import LLNode, HLNode
 import common as cm
-from contraint_table import ConstraintTable
+from constraint_table import ConstraintTable
 
 
 class SingleAgentSolver:
     def __init__(self, instance: Instance, agent: int):
         self.instance = instance
         self.agent = agent
-        self.start_location = instance.start_locations[agent]
-        self.goal_location = instance.goal_locations[agent]
+        self.start_location = int(instance.start_locations[agent])
+        self.goal_location = int(instance.goal_locations[agent])
 
         self.runtime_build_ct = 0
         self.runtime_build_cat = 0
@@ -30,7 +30,13 @@ class SingleAgentSolver:
         self.min_f_val = 0  # minimal f value in OPEN
         self.w = 1          # suboptimal bound
 
-    def get_name(self):
+        self.open_list: cm.PrioritySet = cm.PrioritySet()
+        self.focal_list = cm.PrioritySet()
+
+        self._compute_heuristics()
+
+    @staticmethod
+    def get_name():
         raise NotImplementedError
 
     def get_travel_time(self, start: int, end: int, constraint_table: ConstraintTable, upper_bound: int):
@@ -66,7 +72,6 @@ class SingleAgentSolver:
                 self.value = value
 
             def __lt__(self, other):
-                """used by OPEN (heap) to compare nodes (top of the heap has min f-val, and then highest g-val)"""
                 return self.value < other.value
 
         if len(self.my_heuristic) != self.instance.map_size:
@@ -75,15 +80,35 @@ class SingleAgentSolver:
         # generate a heap that can save nodes
         root = Node(self.goal_location, 0)
         self.my_heuristic[self.goal_location] = 0
-        lst = [root]
 
-        while len(lst) > 0:
-            curr = hpq.heappop(lst)
+        heap = []
+        hpq.heappush(heap, root)
+
+        while heap:
+            curr = hpq.heappop(heap)
             for next_location in self.instance.get_neighbors(curr.location):
                 if self.my_heuristic[next_location] > curr.value + 1:
                     self.my_heuristic[next_location] = curr.value + 1
-                    nxt = Node(next_location, curr.value + 1)
-                    hpq.heappush(lst, nxt)
+                    next_node = Node(next_location, curr.value + 1)
+                    hpq.heappush(heap, next_node)
+
+    def reset(self):
+        self.num_expanded = 0
+        self.num_generated = 0
+
+    def pop_node(self):
+        node = self.focal_list.pop()
+        self.open_list.remove(node)
+        node.in_openlist = False
+        self.num_expanded += 1
+        return node
+
+    def _update_focal_list(self):
+        raise NotImplementedError
+
+    @staticmethod
+    def _update_path(goal, path: List[cm.PathEntry]):
+        raise NotImplementedError
 
 
 if __name__ == "__main__":

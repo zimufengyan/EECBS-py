@@ -6,6 +6,7 @@
 
 from typing import List, Dict, Tuple, Union
 
+import numpy as np
 from multipledispatch import dispatch
 
 import common as cm
@@ -26,7 +27,7 @@ class ConstraintTable:
         self.ct_max_timestep = 0
         self.cat: List[List[bool]] = []  # conflict avoidance table
         self.cat_max_timestep = 0
-        self.cat_goals: List[int] = []
+        self.cat_goals: np.ndarray = np.ones(map_size, dtype=int) * cm.MAX_TIMESTEP
 
         # <timestep, location>: the idx must be at the given location at the given timestep
         self.landmarks: Dict[int, int] = dict()
@@ -34,7 +35,7 @@ class ConstraintTable:
     def clear(self):
         self.ct.clear()
         self.landmarks.clear()
-        self.cat_goals.clear()
+        self.cat_goals.fill(cm.MAX_TIMESTEP)
 
     def _get_edge_index(self, src: int, tgt: int) -> int:
         return (1 + src) * self.map_size + tgt
@@ -55,7 +56,7 @@ class ConstraintTable:
 
     def _insert_landmark(self, loc: int, t: int):
         """insert a landmark, i.e., the idx has to be at the given location at the given timestep"""
-        it = self.landmarks.get(t)
+        it = self.landmarks.get(t, None)
         if it is None:
             self.landmarks[t] = loc
         else:
@@ -81,17 +82,17 @@ class ConstraintTable:
         if self.length_max < cm.MAX_TIMESTEP:
             rst = max(rst, self.length_max)
         if not len(self.landmarks) == 0:
-            rst = max(rst, self.landmarks[-1])
+            rst = max(rst, list(self.landmarks.keys())[-1])
         return rst
 
     def get_last_collision_timestep(self, location: int) -> int:
         rst = -1
-        if not len(self.cat):
+        if len(self.cat) != 0:
             for t in range(len(self.cat[location]) - 1, rst, -1):
                 if self.cat[location][t]:
                     return t
 
-        return -1
+        return rst
 
     @dispatch(int, int)
     def constrained(self, loc: int, t: int) -> bool:
@@ -119,8 +120,9 @@ class ConstraintTable:
         if len(self.cat) != 0:
             if len(self.cat[next_id]) > next_timestep and self.cat[next_id][next_timestep]:
                 rst += 1
-            if curr_id != next_id and len(self.cat[next_id]) >= next_timestep and len(
-                    self.cat[curr_id]) > next_timestep:
+            if curr_id != next_id and len(self.cat[next_id]) >= next_timestep and \
+                    len(self.cat[curr_id]) > next_timestep and self.cat[next_id][next_timestep - 1] \
+                    and self.cat[curr_id][next_timestep]:
                 rst += 1
             if self.cat_goals[next_id] < next_timestep:
                 rst += 1
@@ -167,14 +169,14 @@ class ConstraintTable:
         self.cat_max_timestep = other.cat_max_timestep
         self.landmarks = other.landmarks
 
-    def insert_node_to_ct(self, node: Union[HLNode, CBSNode], agent: id):
+    def insert_node_to_ct(self, node: Union[HLNode, CBSNode], agent: int):
         """build the constraint table for the given idx at the give node"""
         curr = node
         while curr.parent is not None:
             self.insert_constraints_to_ct(curr.constraints, agent)
             curr = curr.parent
 
-    def insert_constraints_to_ct(self, constraints: List[Constraint], agent: id):
+    def insert_constraints_to_ct(self, constraints: List[Constraint], agent: int):
         """insert constraints for the given idx to the constraint table"""
         if len(constraints) == 0:
             return
@@ -190,7 +192,11 @@ class ConstraintTable:
         elif con_type == ConstraintType.GLENGTH:
             assert len(constraints) == 1
             if agent == a:
-                #  this idx has to be at x at timestep t
+                #  path of agent_id should be of length at least t + 1
+                self.length_min = max(self.length_min, t + 1)
+        elif con_type == ConstraintType.POSITIVE_VERTEX:
+            assert len(constraints) == 1
+            if agent == a:
                 self._insert_landmark(x, t)
             else:
                 # other agents cannot stay at x at timestep t
@@ -210,7 +216,7 @@ class ConstraintTable:
         elif con_type == ConstraintType.VERTEX:
             if agent == a:
                 for constraint in constraints:
-                    a, x, y, t, con_type = constraint
+                    _, x, y, t, _ = constraint
                     self.insert_vc_to_ct(x, t, t + 1)
         elif con_type == ConstraintType.EDGE:
             assert len(constraints) == 1
@@ -219,13 +225,13 @@ class ConstraintTable:
         elif con_type == ConstraintType.BARRIER:
             if agent == a:
                 for constraint in constraints:
-                    a, x, y, t, con_type = constraint
+                    _, x, y, t, _ = constraint
                     states = self._decode_barrier(x, y, t)
                     for state in states:
                         self.insert_vc_to_ct(state[0], state[1], state[1] + 1)
         elif con_type == ConstraintType.RANGE:
-            assert len(constraints) == 1
             if agent == a:
+                assert len(constraints) == 1
                 # the idx cannot stay at x from timestep y to timestep t.
                 self.insert_vc_to_ct(x, y, t + 1)
 
@@ -245,10 +251,12 @@ class ConstraintTable:
     def insert_vc_to_ct(self, loc: int, t_min: int, t_max: int):
         """insert a vertex constraint to the constraint table"""
         assert loc >= 0
+        if self.ct.get(loc, None) is None:
+            self.ct[loc] = []
         self.ct[loc].append((t_min, t_max))
         if cm.MAX_TIMESTEP > t_max > self.ct_max_timestep:
             self.ct_max_timestep = t_max
-        elif t_max == cm.MAX_TIMESTEP and t_min == self.ct_max_timestep:
+        elif t_max == cm.MAX_TIMESTEP and t_min > self.ct_max_timestep:
             self.ct_max_timestep = t_min
 
     def insert_ec_to_ct(self, src: int, tgt: int, t_min: int, t_max: int):
@@ -258,15 +266,15 @@ class ConstraintTable:
     def insert_paths_to_cat(self, agent: int, paths: List[cm.Path]):
         """build the conflict avoidance table using a set of paths"""
         for ag in range(len(paths)):
-            if ag == agent or paths[ag] is None:
+            if ag == agent or not paths[ag]:
                 continue
-            self.insert_path_to_ct(paths[ag])
+            self.insert_path_to_cat(paths[ag])
 
     def insert_path_to_cat(self, path: cm.Path):
         """insert a path to the conflict avoidance table"""
         if len(self.cat) == 0:
             self.cat: List[List[bool]] = [[] for _ in range(self.map_size)]
-            self.cat_goals = [cm.MAX_TIMESTEP for _ in range(self.map_size)]
+            self.cat_goals = np.ones(self.map_size, dtype=int) * cm.MAX_TIMESTEP
         assert self.cat_goals[path[-1].location] == cm.MAX_TIMESTEP
         self.cat_goals[path[-1].location] = len(path) - 1
         for timestep in range(len(path)):

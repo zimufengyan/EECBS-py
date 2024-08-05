@@ -6,19 +6,21 @@
 
 import random
 from enum import Enum
-from typing import List, Tuple, Union
+from typing import List, Tuple, Optional, Set
 
-from common import Path
+import numpy as np
+
+import common as cm
 from conflict import Conflict, Constraint, ConstraintType
 
 
 class NodeSelection(Enum):
-    NODE_RANDOM = 1
-    NODE_H = 2
-    NODE_DEPTH = 3
-    NODE_CONFLICTS = 4
-    NODE_CONFLICTPAIRS = 5
-    NODE_MVC = 6
+    NODE_RANDOM = 0
+    NODE_H = 1
+    NODE_DEPTH = 2
+    NODE_CONFLICTS = 3
+    NODE_CONFLICTPAIRS = 4
+    NODE_MVC = 5
 
 
 class LLNode:
@@ -26,7 +28,7 @@ class LLNode:
         self.location = location
         self.g_val = g_val
         self.h_val = h_val
-        self.parent: Union[LLNode, None] = parent
+        self.parent: Optional[LLNode] = parent
         self.timestep = timestep
         self.num_of_conflicts = num_of_conflicts
         self.in_openlist = in_openlist
@@ -38,9 +40,6 @@ class LLNode:
     @property
     def f_val(self):
         return self.g_val + self.h_val
-
-    def get_f_val(self):
-        return self.f_val
 
     def init_from_other(self, other):
         self.location = other.location
@@ -54,13 +53,23 @@ class LLNode:
         self.is_goal = other.is_goal
 
     def __lt__(self, other):
-        """used by OPEN (heap) to compare nodes (top of the heap has min f-val, and then highest g-val)"""
-        if self.f_val == other.f_val:
-            if self.h_val == other.h_val:
-                return random.random() > 0.5  # break ties randomly
-            # break ties towards smaller h_vals (closer to goal location)
-            return self.h_val < other.h_val
-        return self.f_val < other.f_val
+        """
+        since f_val, h_val, num_of_conflicts have been compared and they are both equal,
+        so here we just break ties randomly
+        """
+        return random.uniform(0, 1) < 0.5  # break ties randomly
+        # if self.f_val == other.f_val:
+        #     if self.h_val == other.h_val:
+        #
+        #     # break ties towards smaller h_vals (closer to goal location)
+        #     return self.h_val < other.h_val
+        # return self.f_val < other.f_val
+
+    def get_sort_tuple_for_open(self):
+        return self.f_val, self.h_val
+
+    def get_sort_tuple_for_focal(self):
+        return self.num_of_conflicts, self.f_val, self.h_val
 
 
 class HLNode:
@@ -95,14 +104,14 @@ class HLNode:
         self.unknown_conf: List[Conflict] = []
 
         # the chosen conflict
-        self.conflict: Conflict = None
+        self.conflict: Optional[Conflict] = None
 
         # online learning
-        self.ditance_error = 0
+        self.distance_error = 0
         self.cost_error = 0
         self.fully_expanded = False
 
-        self.parent: Union[HLNode, None] = None
+        self.parent: Optional[HLNode] = None
         self.children: List[HLNode] = []
 
     @property
@@ -124,27 +133,62 @@ class HLNode:
         raise NotImplementedError
 
     def update_distance_to_go(self):
-        pass
+        conflicting_agents: Set[Tuple[int, int]] = set()
+        for conflict in self.unknown_conf:
+            agents = (min(conflict.a1, conflict.a2), max(conflict.a1, conflict.a2))
+            if agents not in conflicting_agents:
+                conflicting_agents.add(agents)
+
+        # while conflicts only store one conflict per pair of agents
+        self.distance_to_go = len(self.conflicts) + len(conflicting_agents)
 
     def print_constraints(self, idx: int):
-        pass
+        curr = self
+        txt = ""
+        while curr.parent is not None:
+            for constraint in curr.constraints:
+                a, x, y, t, flag = curr.constraints[0]
+                if flag == ConstraintType.LEQLENGTH or flag == ConstraintType.POSITIVE_VERTEX or \
+                        flag == ConstraintType.POSITIVE_EDGE:
+                    txt += f"{constraint}, "
+                elif a == idx:
+                    txt += f"{constraint}, "
+            curr = curr.parent
+
+        print(txt)
+
+    def clear(self):
+        self.conflicts.clear()
+        self.unknown_conf.clear()
+
+    def __repr__(self):
+        return (f"Node {self.time_generated} from {self.chosen_form} ( f = {self.g_val} + {self.h_val}, "
+                f"f hat = {self.f_hat_val - self.cost_to_go} + {self.cost_to_go}, d = {self.distance_to_go} )"
+                f" with {self.num_new_paths} new paths ")
 
 
 class CBSNode(HLNode):
     def __init__(self):
         super().__init__()
-        self.paths: List[Tuple[int, Path]] = []
+        self.paths: List[Tuple[int, cm.Path]] = []
+        self.parent: CBSNode | None = None
+        self.children: List[CBSNode] = []
 
     def get_name(self):
         return "CBS Node"
 
-    def get_num_new_paths(self):
+    @property
+    def num_of_conflicts(self):
         return len(self.paths)
 
-    def get_f_hat_val(self):
+    @property
+    def f_hat_val(self):
         return self.g_val + self.cost_to_go
 
-    def get_replanned_agents(self):
+    def get_f_hat_val(self):
+        return self.f_hat_val
+
+    def get_replanned_agents(self) -> List[int]:
         rst: List[int] = []
         for path in self.paths:
             rst.append(path[0])
@@ -152,16 +196,26 @@ class CBSNode(HLNode):
 
     def __lt__(self, other):
         """used to compare nodes in the OPEN list"""
-        if self.get_f_hat_val() == other.get_f_hat_val():
-            if self.get_f_val() == other.get_f_val():
+        if self.f_hat_val == other.f_hat_val:
+            if self.f_val == other.f_val:
                 if self.distance_to_go == other.distance_to_go:
                     return self.h_val < other.h_val
                 return self.distance_to_go < other.distance_to_go
-            return self.get_f_val() < other.get_f_val()
-        return self.get_f_hat_val() < other.get_f_hat_val()
+            return self.f_val < other.f_val
+        return self.f_hat_val < other.f_hat_val
+
+    def get_sort_tuple_for_focal(self):
+        """get tuple for sorting in Focal list."""
+        return self.distance_to_go, self.f_val, self.g_val + self.cost_to_go, self.h_val
+
+    def get_sort_tuple_for_cleanup(self):
+        """get tuple for sorting in Cleanup list. """
+        return self.f_val, self.distance_to_go, self.g_val + self.cost_to_go, self.h_val
 
 
 class ConstraintsHasher:
+    """Hash a CT node by constraints on one agent"""
+
     def __init__(self, a, n: HLNode):
         self.a: int = a
         self.n: HLNode = n
@@ -191,7 +245,7 @@ class ConstraintsHasher:
                     cons2.add(con)
             curr = curr.parent
 
-        return cons1 == cons2
+        return all(i == j for i, j in zip(cons1, cons2))
 
     def __hash__(self):
         curr = self.n
@@ -209,7 +263,7 @@ class ConstraintsHasher:
 
 
 class AstarNode(LLNode):
-    def __init__(self, loc: int, g_val: int, h_val: int, parent: Union[LLNode, None],
+    def __init__(self, loc: int, g_val: int, h_val: int, parent: Optional[LLNode],
                  timestep: int, num_of_conflicts=0, in_openlist=False):
         super().__init__(loc, g_val, h_val, parent, timestep, num_of_conflicts, in_openlist)
 
@@ -221,16 +275,22 @@ class AstarNode(LLNode):
     def __eq__(self, other):
         return (other is not None and self.location == other.location
                 and self.timestep == other.timestep
+                # and self.g_val == other.g_val
+                # and self.h_val == other.h_val
                 and self.wait_at_goal == other.wait_at_goal)
 
     def get_hash_key(self):
-        return self.location ^ (self.timestep << 1) + int(self.wait_at_goal)
+        return self.location ^ (self.timestep << 1)
+
+    def __repr__(self):
+        return (f"AstarNode({self.location}, {self.timestep}, {self.g_val}, {self.h_val}, "
+                f"{self.wait_at_goal}, {self.num_of_conflicts})")
 
 
 class MDDNode:
     def __init__(self, curr_loc: int, t: int = 0, parent=None):
         self.location = curr_loc
-        self.parent: Union[MDDNode, None] = parent
+        self.parent: Optional[MDDNode, None] = parent
         self.level = t if parent is None else parent.level + 1
         self.parents: List[MDDNode] = [] if parent is None else [parent]
         self.children: List[MDDNode] = []
@@ -257,7 +317,9 @@ class ECBSNode(HLNode):
     def __init__(self):
         super().__init__()
         self.sum_of_costs = 0  # sum of costs of the paths
-        self.paths: List[Tuple[int, Path]] = []  # new paths <idx id, <path, min f>>
+        self.paths: List[Tuple[int, Tuple[cm.Path, int]]] = []  # new paths <idx id, <path, min f>>
+        self.parent: Optional[ECBSNode, None] = None
+        self.children: List[ECBSNode] = []
 
     @property
     def f_hat_val(self):
@@ -286,6 +348,74 @@ class ECBSNode(HLNode):
             return self.f_val < other.f_val
         return self.sum_of_costs < other.sum_of_costs
 
+    def get_sort_tuple_for_open(self):
+        return self.sum_of_costs + self.cost_to_go, self.f_val, self.distance_to_go, self.h_val
+
+    def get_sort_tuple_for_focal(self):
+        """get tuple for sorting in Focal list."""
+        return self.distance_to_go, self.f_val, self.sum_of_costs + self.cost_to_go, self.h_val
+
+    def get_sort_tuple_for_cleanup(self):
+        """get tuple for sorting in Cleanup list. """
+        return self.f_val, self.distance_to_go, self.sum_of_costs + self.cost_to_go, self.h_val
+
+
+class SIPPNode(LLNode):
+    def __init__(self, loc, g_val=0, h_val=0, parent=None,
+                 timestep=0, high_generation=0, high_expansion=0, collision_v=False, num_of_conflicts=0):
+        super().__init__(loc, g_val, h_val, parent, timestep, num_of_conflicts)
+        self.high_generation = high_generation  # the upper bound with respect to generation
+        self.high_expansion = high_expansion  # the upper bound with respect to expansion
+        self.collision_v = collision_v
+
+    def __eq__(self, other):
+        return id(self) == id(other) or (other is not None and self.location == other.location and
+                                         # self.timestep == other.timestep and
+                                         # self.num_of_conflicts == other.num_of_conflicts and
+                                         self.wait_at_goal == other.wait_at_goal and
+                                         self.is_goal == other.is_goal and
+                                         self.high_generation == other.high_generation)
+
+    def __hash__(self):
+        return hash(self.get_hash_key())
+        # return hash(self.location ^ (self.high_generation << 1))
+
+    def get_hash_key(self):
+        seed = hash_combine2(0, self.location)
+        seed = hash_combine2(seed, self.high_generation)
+        return seed
+
+    def __repr__(self):
+        return (f"SIPPNode ({self.location}, {self.timestep}, {self.g_val}, {self.h_val}, "
+                f"{self.wait_at_goal}, {self.num_of_conflicts})")
+
+
+def hash_combine(h, k):
+    m = 0xc6a4a7935bd1e995
+    r = 47
+
+    k *= m
+    k ^= k >> r
+    k *= m
+
+    h ^= k
+    h *= m
+    h += 0xe6546b64
+    return h
+
+
+def hash_combine2(seed, value):
+    seed ^= value + 0x9e3779b9 + (seed << 6) + (seed >> 2)
+    return seed
+
 
 if __name__ == "__main__":
-    pass
+    n = AstarNode(1, 0, 0, None, 1)
+    open_list = cm.PrioritySet()
+    open_list.add(n, *n.get_sort_tuple_for_open())
+    a = AstarNode(1, 0, 0, None, 1)
+    print(a in open_list)
+    n.timestep = 2
+    print(a in open_list)
+    a.timestep = 2
+    print(a in open_list)

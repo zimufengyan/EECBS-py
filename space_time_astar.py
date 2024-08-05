@@ -3,34 +3,30 @@
 # @Time      :2024/7/21 下午3:53
 # @Author    :ZMFY
 # Description:
-import heapq as hpq
 import time
 from copy import deepcopy
 from typing import List, Dict, Tuple
 
-import numpy as np
-
 import common as cm
-from contraint_table import ConstraintTable
+from constraint_table import ConstraintTable
 from instance import Instance
 from nodes import AstarNode, LLNode
-from single_agent_solver import SingleAgentSolver
 from nodes import HLNode
+from single_agent_solver import SingleAgentSolver
 
 
-class SpaceTimeSolver(SingleAgentSolver):
+class SpaceTimeAstar(SingleAgentSolver):
     def __init__(self, instance: Instance, agent: int):
         super().__init__(instance, agent)
-        self.open_list = []
-        self.focal_list = []  # <num_of_conflicts, f_val, h_val, random, node>
-        self.all_nodes_table: Dict[int, AstarNode] = dict()
+        self.all_nodes_table: Dict[AstarNode, AstarNode] = dict()
 
-    def get_name(self):
+    @staticmethod
+    def get_name():
         return "Astar"
 
     def find_optimal_path(self, node: HLNode, initial_constraint: ConstraintTable,
                           paths: List[cm.Path], agent: int, lower_bound: int):
-        return self.find_optimal_path(node, initial_constraint, paths, agent, lower_bound)[0]
+        return self.find_suboptimal_path(node, initial_constraint, paths, agent, lower_bound, 1)[0]
 
     def find_suboptimal_path(self, node: HLNode, initial_constraint: ConstraintTable,
                              paths: List[cm.Path], agent: int, lower_bound: int, w: float) -> Tuple[cm.Path, int]:
@@ -41,9 +37,8 @@ class SpaceTimeSolver(SingleAgentSolver):
         lowerbound is an underestimation of the length of the path in order to speed up the search.
         """
         self.w = w
-        path = cm.Path()
-        self.num_expanded = 0
-        self.num_generated = 0
+        path: cm.Path = []
+        self.reset()
 
         # build constraint table
         st = time.perf_counter()
@@ -66,25 +61,25 @@ class SpaceTimeSolver(SingleAgentSolver):
         start = AstarNode(self.start_location, 0, max(lower_bound, self.my_heuristic[self.start_location]),
                           None, 0, 0)
         self.num_generated += 1
-        hpq.heappush(self.open_list, start)
+        # hpq.heappush(self.open_list, start)
+        self.open_list.add(start, *start.get_sort_tuple_for_open())
         start.in_openlist = True
-        hpq.heappush(self.focal_list, (
-            start.num_of_conflicts, start.f_val, start.h_val, np.random.random(), start
-        ))
-        key = start.get_hash_key()
-        self.all_nodes_table[key] = start
+        # hpq.heappush(self.focal_list, start.get_sort_tuple_for_focal())
+        self.focal_list.add(start, *start.get_sort_tuple_for_focal())
+        self.all_nodes_table[start] = start
         self.min_f_val = start.f_val
 
         while len(self.open_list) > 0:
             self._update_focal_list()  # update FOCAL if min f-val increased
             curr = self.pop_node()
+            # print(f"\tpopped : {curr}")
             assert curr.location >= 0
 
             # check if the popped node is a goal
             if (curr.location == self.goal_location  # arrive at the goal location
                     and not curr.wait_at_goal  # not wait at the goal location
                     and curr.timestep >= holding_time):  # the idx can hold the goal location afterward
-                path = self._update_path(curr, path)
+                self._update_path(curr, path)
                 break
             if curr.timestep >= constraint_table.length_max:
                 continue
@@ -116,17 +111,26 @@ class SpaceTimeSolver(SingleAgentSolver):
                     nxt.wait_at_goal = True
 
                 # try to retrieve it from the hash table
-                nxt_key = nxt.get_hash_key()
-                existing_node = self.all_nodes_table.get(nxt_key, None)
+                # nxt_key = nxt.get_hash_key()
+                existing_node = self.all_nodes_table.get(nxt, None)
+                # self.push_node(nxt)
+                # # print(f"push node {nxt}, now |FOCAL| = {len(self.focal_list)}")
+                # self.all_nodes_table[nxt_key] = nxt
+                # if existing_node is None or nxt != existing_node:
                 if existing_node is None:
+                    # if nxt is not in closed set or hash values and nodes of two are both not same
                     self.push_node(nxt)
-                    self.all_nodes_table[nxt_key] = nxt
-                    continue
+                    # print(f"push node {nxt}, now |FOCAL| = {len(self.focal_list)}")
+                    self.all_nodes_table[nxt] = nxt
                 else:
+                    # if nxt != existing_node:   # if location, timestep and wait_at_goal of two nodes are both not same
+                    #     continue
                     if (existing_node.f_val > nxt.f_val  # if f-val decreased through this new path
                             or (existing_node.f_val == nxt.f_val  # or it remains the same but there's fewer conflicts
                                 and existing_node.num_of_conflicts > nxt.num_of_conflicts)):
-                        if existing_node.in_openlist:
+                        # print(f"existing: {existing_node}, new: {nxt}")
+                        if not existing_node.in_openlist:
+                            # if it is in the closed list (reopen)
                             existing_node.init_from_other(nxt)
                             self.push_node(existing_node)
                         else:
@@ -148,14 +152,16 @@ class SpaceTimeSolver(SingleAgentSolver):
 
                             existing_node.init_from_other(nxt)  # update existing node
                             if update_open:
-                                hpq.heapify(self.open_list)
+                                # hpq.heapify(self.open_list)
+                                self.open_list.update()
                             if add_to_focal:
-                                hpq.heappush(self.focal_list, (
-                                    existing_node.num_of_conflicts, existing_node.f_val, existing_node.h_val,
-                                    np.random.random(), existing_node
-                                ))
+                                # print(f"push node {nxt}, now |FOCAL| = {len(self.focal_list)}")
+                                # hpq.heappush(self.focal_list, existing_node.get_sort_tuple_for_focal())
+                                self.focal_list.add(existing_node, *existing_node.get_sort_tuple_for_focal())
                             if update_in_focal:
-                                hpq.heapify(self.focal_list)
+                                # hpq.heapify(self.focal_list)
+                                self.focal_list.update()
+                        self.all_nodes_table[existing_node] = existing_node
         self.release_nodes()
         return path, self.min_f_val
 
@@ -163,17 +169,18 @@ class SpaceTimeSolver(SingleAgentSolver):
         length = cm.MAX_TIMESTEP
         static_timestep = constraint_table.get_max_timestep() + 1  # everything is static after this timestep
         root = AstarNode(start, 0, self.compute_heuristic(start, end), None, 0, 0)
-        key = root.get_hash_key()
-        self.all_nodes_table[key] = root
-        hpq.heappush(self.open_list, root)
+        # key = root.get_hash_key()
+        self.all_nodes_table[root] = root
+        # hpq.heappush(self.open_list, root)
+        self.open_list.add(root, *root.get_sort_tuple_for_open())
 
         while len(self.open_list) > 0:
-            curr: AstarNode = hpq.heappop(self.open_list)
+            # curr: AstarNode = hpq.heappop(self.open_list)
+            curr: AstarNode = self.open_list.pop()
             if curr.location == end:
                 length = curr.g_val
                 break
-            next_locations = self.instance.get_neighbors(curr.location)
-            next_locations.append(curr.location)
+            next_locations = self.get_next_locations(curr.location)
             for next_location in next_locations:
                 next_timestep = curr.timestep + 1
                 next_g_val = curr.g_val + 1
@@ -189,66 +196,70 @@ class SpaceTimeSolver(SingleAgentSolver):
                         # the cost of the path is larger than the upper bound
                         continue
                     nxt = AstarNode(next_location, next_g_val, next_h_val, None, next_timestep, 0)
-                    nxt_key = nxt.get_hash_key()
-                    existing_node = self.all_nodes_table.get(nxt_key, None)
+                    # nxt_key = nxt.get_hash_key()
+                    existing_node = self.all_nodes_table.get(nxt, None)
                     if existing_node is None:
                         # add the newly generated node to heap and hash table
-                        hpq.heappush(self.open_list, nxt)
-                        self.all_nodes_table[nxt_key] = nxt
+                        # hpq.heappush(self.open_list, nxt)
+                        self.open_list.add(nxt, *nxt.get_sort_tuple_for_open())
+                        self.all_nodes_table[nxt] = nxt
                     else:
                         if existing_node.g_val > next_g_val:
                             # update existing node's g_val (only in the heap)
                             existing_node.g_val = next_g_val
                             existing_node.timestep = next_timestep
-                            hpq.heapify(self.open_list)  # update open-list
+                            # hpq.heapify(self.open_list)  # update open-list
+                            self.open_list.update()
+                            self.all_nodes_table[existing_node] = existing_node
 
         self.release_nodes()
         return length
 
     @staticmethod
-    def _update_path(goal: LLNode, path: List[cm.PathEntry]) -> List[cm.PathEntry]:
+    def _update_path(goal: LLNode, path: List[cm.PathEntry]):
         curr = goal
         if curr.is_goal:
             curr = curr.parent
-        new_path = deepcopy(path)
-        new_path = new_path[:curr.g_val + 1][::-1] + new_path[curr.g_val + 1:]
 
         while curr is not None:
-            new_path.append(cm.PathEntry(curr.location))
+            path.append(cm.PathEntry(curr.location))
             curr = curr.parent
 
-        new_path.reverse()
-        return new_path
+        path.reverse()
 
     def _update_focal_list(self):
-        open_head: AstarNode = self.open_list[0]
-        if open_head.get_f_val() > self.min_f_val:
-            new_min_f_val = open_head.get_f_val()
+        # open_head: AstarNode = hpq.nsmallest(1, self.focal_list)[0][-1]
+        open_head = self.open_list.top()
+        if open_head.f_val > self.min_f_val:
+            new_min_f_val = open_head.f_val
             for n in self.open_list:
-                if self.w * new_min_f_val >= n.get_f_val() > self.w * self.min_f_val:
-                    hpq.heappush(self.focal_list, (
-                        n.num_of_conflicts, n.get_f_val(), n.h_val, np.random.random(), n
-                    ))
+                if self.w * new_min_f_val >= n.f_val > self.w * self.min_f_val and not self.focal_list.has(n):
+                    # hpq.heappush(self.focal_list, n.get_sort_tuple_for_focal())
+                    self.focal_list.add(n, *n.get_sort_tuple_for_focal())
+                    # print(f"push node {n} when updating FOCAL, now |FOCAL| = {len(self.focal_list)}")
 
-    def pop_node(self) -> AstarNode:
-        popped = hpq.heappop(self.focal_list)
-        node: AstarNode = popped[-1]
-        self.open_list.remove(node)
-        node.in_openlist = False
-        self.num_expanded += 1
-        return node
+    # def pop_node(self) -> AstarNode:
+    #     # popped = hpq.heappop(self.focal_list)
+    #     # node: AstarNode = popped[-1]
+    #     node = self.focal_list.pop()
+    #     self.open_list.remove(node)
+    #     node.in_openlist = False
+    #     self.num_expanded += 1
+    #     return node
 
     def push_node(self, node: AstarNode):
         if node.in_openlist:
             # update node if it was existed in open list
-            hpq.heapify(self.open_list)
+            # hpq.heapify(self.open_list)
+            self.open_list.update()
         else:
-            hpq.heappush(self.open_list, node)
+            # hpq.heappush(self.open_list, node)
+            self.open_list.add(node, *node.get_sort_tuple_for_open())
         node.in_openlist = True
         self.num_generated += 1
-        if node.get_f_val() < self.w * self.min_f_val:
-            hpq.heappush(self.focal_list,
-                         (node.num_of_conflicts, node.get_f_val(), node.h_val, np.random.random()), node)
+        if node.f_val < self.w * self.min_f_val:
+            # hpq.heappush(self.focal_list, node.get_sort_tuple_for_focal())
+            self.focal_list.add(node, *node.get_sort_tuple_for_focal())
 
     def release_nodes(self):
         self.open_list.clear()
